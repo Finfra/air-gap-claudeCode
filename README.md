@@ -569,7 +569,16 @@ air-gap-claudeCode/
 │   ├── test-setup.sh
 │   ├── .env.org                     # NEW: 커밋된 템플릿
 │   └── .env                         # NEW: 사용자 복사본 (.gitignore)
+├── LICENSE                          # MIT
 └── README.md
 ```
 
 각 컨테이너 폴더가 독립된 `.env`를 보유함 (docker compose 자동 로드). 루트의 공용 `env`/`.env`와 심볼릭 링크는 폐지됨.
+
+# 라이선스
+
+이 저장소는 [MIT License](LICENSE) 로 배포함. Copyright (c) 2026 Finfra Co., Ltd. (https://finfra.kr)
+
+* 소스·Docker 구성·스크립트·문서 전부 MIT 단일 적용 — 별도 상표·배포본 약관 없음
+* 컨테이너가 기동 시 내려받는 서드파티 구성요소(Ollama·LM Studio·Claude Code·각 LLM 모델)는 **각자의 라이선스**를 따르며 본 저장소 라이선스에 포함되지 않음
+* 문의: finfra@gmail.com
