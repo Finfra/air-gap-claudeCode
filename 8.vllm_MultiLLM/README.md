@@ -36,7 +36,8 @@ flowchart LR
 | `.env.org`                | 기본 프리셋 — 소형 모델(Qwen3-4B FP8) 복제본 2개, 16GB GPU 1장                                            |
 | `qwen38-27b.env.org`      | 대형 프리셋 — Qwen3.8-27B GGUF 3bit 복제본 1개 (vllm_qwen38 과 같은 모델·설정)                            |
 | `start.sh`                | GPU·드라이버·메모리 비율 합 점검 후 `docker compose up -d --build --scale vllm=N`                         |
-| `test.sh`                 | 8단계 종단 점검 (아래 «점검»)                                                                             |
+| `test.sh`                 | 9단계 종단 점검 (아래 «점검»)                                                                             |
+| `bench/kv-bench.sh`       | KV dtype before/after 벤치 — dtype 별 단일 vLLM 을 같은 조건으로 띄워 같은 부하 (아래 «TurboQuant 효과 측정») |
 | `chat.sh`                 | 게이트웨이 경유 스트리밍 채팅 + tok/s·응답 백엔드 표시 (`SESSION=` 으로 세션 고정)                        |
 | `clear.sh`                | 컨테이너 정리 (`--volumes` 면 named volume 까지)                                                          |
 
@@ -102,6 +103,53 @@ KV cache 를 WHT 회전 + Lloyd-Max 양자화로 압축한다. **가중치는 �
 
 * GPU 1장을 복제본 여럿이 나누는 이 예제에서 특히 효과가 크다 — 복제본당 VRAM 이 작아 KV 예산이 빠듯하기 때문이다(아래 실측)
 * hybrid(linear + full attention) 모델(Qwen3.5·3.8)은 KV 비중이 원래 작아 이득이 상대적으로 작다
+
+## TurboQuant 효과 측정 (before/after)
+
+TurboQuant 는 KV cache 만 압축하므로 효과는 **세 축**으로 본다 — 손해 축(속도·품질)도 같이 재야 «개선» 이라 말할 수 있다.
+
+| 축                 | 무엇을 보나                                                    | 어디서                                                      |
+| :----------------- | :------------------------------------------------------------- | :---------------------------------------------------------- |
+| ① KV 용량 (이득)   | 같은 VRAM 에 들어가는 토큰 수, 기동 가능한 최대 컨텍스트       | 기동 로그 `GPU KV cache size` · bf16 실패 시 `estimated maximum model length` |
+| ② 동시성 (이득)    | 동시에 실제로 돈 요청 수, 대기열, 집계 처리량                  | `/metrics` 의 `num_requests_running`·`waiting`·`kv_cache_usage_perc` |
+| ③ 비용 (손해)      | 단일 스트림 decode 속도, 긴 문맥 회수(needle), 출력 내용       | 스트리밍 tok/s · needle-in-haystack 5위치 · greedy 출력 비교 |
+
+```bash
+./clear.sh                                     # GPU 를 비운다 (벤치는 단일 vLLM 을 직접 띄움)
+bench/kv-bench.sh                              # auto(bf16) fp8 k8v4 4bit_nc 3bit_nc 전체 — dtype 당 약 3분
+BENCH_STARTUP_ONLY=1 BENCH_MAX_MODEL_LEN=32768 BENCH_MAX_NUM_SEQS=4 bench/kv-bench.sh auto turboquant_4bit_nc
+BENCH_ENV=qwen38-27b.env.org BENCH_STARTUP_ONLY=1 BENCH_MAX_MODEL_LEN=32768 bench/kv-bench.sh auto
+```
+
+결과는 `bench/results/<시각>_<모델>_len<N>/` 에 dtype 별 JSON·기동 로그·`report.md` 로 남는다.
+
+### fg1 실측 (2026-10-08)
+
+**A. 실사용 설정 그대로 — bf16 은 기동 자체가 안 된다**
+
+| 모델 · 설정                                     | `auto` (bf16 KV, before)                                         | `turboquant_4bit_nc` (after)                 |
+| :---------------------------------------------- | :--------------------------------------------------------------- | :------------------------------------------- |
+| Qwen3-4B ×2 복제본 몫 (util 0.45, 32k, seqs 4)  | ❌ 기동 거부 — 32k 1건에 KV 4.5 GiB 필요, 가용 1.75 GiB (최대 12,704) | ✅ **48,160 tokens** (32k 요청 1.47개)      |
+| Qwen3.8-27B GGUF ×1 (util 0.95, 32k, seqs 2)    | ❌ 기동 거부 — 32k 1건에 KV 2.3 GiB 필요, 가용 1.61 GiB (최대 21,168) | ✅ **65,536 tokens** (32k 요청 2개)         |
+
+→ 이 예제의 두 프리셋(16GB 1장에 32k 복제본 2개 / 27B 32k)은 **TurboQuant 가 있어야 성립한다**. bf16 이면 컨텍스트를 12k·21k 로 줄여야 한다.
+
+**B. bf16 도 뜨는 조건에서 dtype 비교** — Qwen3-4B, util 0.45, `max_model_len` 8192, `max_num_seqs` 32, 2.5k 토큰 고유 프롬프트 16개 동시 + 256 토큰 생성
+
+| KV dtype             | KV 토큰 (bf16 대비)   | 피크 동시 실행 | 동시 16 처리량         | 평균/최대 지연   | 단일 decode | needle (5k 문맥) |
+| :------------------- | :-------------------- | -------------: | :--------------------- | :--------------- | ----------: | :--------------: |
+| `auto` (bf16)        | 11,312 (1.0x)         | 4              | 121.7 tok/s            | 21.3 / 33.6 s    | 57.1 tok/s  | 5/5              |
+| `fp8`                | ❌ 기동 실패 (아래)    |                |                        |                  |             |                  |
+| `turboquant_k8v4`    | 25,024 (**2.2x**)     | 9              | 161.8 tok/s (**+33%**) | 19.6 / 25.3 s    | 57.0 tok/s  | 5/5              |
+| `turboquant_4bit_nc` | 28,096 (**2.5x**)     | 10             | 139.5 tok/s (+15%)     | 23.1 / 29.3 s    | 54.8 tok/s  | 5/5              |
+| `turboquant_3bit_nc` | 33,536 (**3.0x**)     | 13             | 132.2 tok/s (+9%)      | 24.9 / 31.0 s    | 54.8 tok/s  | 5/5              |
+
+* **용량**은 압축률대로 늘었다 — GiB 당 토큰으로 보면 bf16 7.3k → 4bit 21.1k (2.9x). dtype 마다 기동 시 프로파일링 결과가 달라 가용 KV GiB 가 조금씩 다르므로(1.33~1.75 GiB) 토큰 절대값보다 이 비율이 공정하다
+* **동시성**: bf16 은 KV 가 차서 16개 중 4개만 돌고 나머지가 대기했다(KV 사용률 99%). TurboQuant 는 9~13개를 동시에 돌렸다
+* **처리량은 압축률과 비례하지 않는다** — 3bit 가 가장 많이 동시에 돌렸지만 역양자화 비용 때문에 집계 처리량은 k8v4 가 가장 높았다. 동시성이 핵심이면 k8v4·4bit, 컨텍스트 길이가 핵심이면 3bit
+* **단일 스트림 속도**는 사실상 같다(57 → 55 tok/s, -4%) — 요청 1개짜리 대화에서는 체감 이득이 없다. 이득은 «더 긴 문맥»·«더 많은 동시 세션» 에서만 나온다
+* **품질**: needle 5/5 는 전 dtype 동일. greedy 출력은 bf16 과 첫 문장 중간부터 표현이 갈라지지만 내용(행성 순서·해시 충돌 설명 등)은 같았다 — 문자 단위 일치율(k8v4 34% · 4bit 29% · 3bit 11%)은 «완전히 같은 출력» 이 아니라는 뜻이지 오답이 아니다. 3bit 가 가장 빨리 갈라진다
+* **fp8** (vLLM 표준 KV 압축)은 이 이미지 + 드라이버 525 조합에서 FlashInfer prefill 커널이 `device kernel image is invalid` 로 실패했다 — 구형 드라이버 환경에서는 TurboQuant 가 사실상 유일한 KV 압축 수단이다
 
 ## 구형 드라이버 (fg1: 525.105, CUDA 12.0)
 

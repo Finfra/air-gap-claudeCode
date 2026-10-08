@@ -43,6 +43,7 @@ PROMPTS.md
 5.lms_MultiLLM/.env
 8.vllm_MultiLLM/.env
 8.vllm_MultiLLM/logs/
+8.vllm_MultiLLM/bench/results/
 *.local
 
 # Logs
