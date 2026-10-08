@@ -1,6 +1,7 @@
 # Project 
 _doc_work
 _doc_arch
+_doc_base
 .claude
 CLAUDE.md
 Harness.md
@@ -92,6 +93,12 @@ z_old/
 # Gemini CLI
 GEMINI.md
 _doc_work/z_htm/
+
+# issue-map 산출물 (Issue.md 로부터 재생성 — prj1#Issue286)
+Issue_map.htm
+
+# graphify 산출물 — 재생성 가능, 커밋 루프 방지 (Issue296)
+graphify-out/
 
 # lms:small 빌드 컨텍스트 (모델 gguf 대용량 + entrypoint 복사본)
 5.lms_MultiLLM/build.small/
