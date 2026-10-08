@@ -1,0 +1,21 @@
+# 8.vllm_MultiLLM 게이트웨이 — nginx L7 패스스루 로드밸런서
+#   claude ↔ vLLM 은 Anthropic Messages API(/v1/messages) 직결. 변환 프록시 없음.
+#   게이트웨이의 단일 책임 = 다중 vLLM 백엔드로의 분산(세션 고정 포함)뿐.
+#   upstream `resolve` 는 nginx 1.27.3+ 필요
+ARG NGINX_IMAGE=nginx:1.27-bookworm
+FROM ${NGINX_IMAGE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# curl: 헬스체크 / tzdata: TZ 적용
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends curl tzdata && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# nginx 공식 이미지 템플릿 메커니즘: /etc/nginx/templates/*.template → envsubst → /etc/nginx/conf.d/
+COPY nginx.conf.template /etc/nginx/templates/default.conf.template
+# 복제본별 upstream 목록 생성 — 20-envsubst 다음에 실행되도록 40 번
+COPY gateway-upstreams.sh /docker-entrypoint.d/40-vllm-upstreams.sh
+RUN chmod +x /docker-entrypoint.d/40-vllm-upstreams.sh
+
+EXPOSE 8080

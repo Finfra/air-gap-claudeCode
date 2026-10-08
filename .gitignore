@@ -31,7 +31,7 @@ PROMPTS.md
 *~
 
 # Project env (커밋 금지) — 각 컨테이너 폴더의 사용자 .env
-# 템플릿: 1.ollama_OneContainer/.env.org, 2.ollama_TwoContainer/.env.org, 3.ollama_External/.env.org, 4.1.lms_OneLLM/.env.org, 5.lms_MultiLLM/.env.org (커밋됨)
+# 템플릿: 1.ollama_OneContainer/.env.org, 2.ollama_TwoContainer/.env.org, 3.ollama_External/.env.org, 4.1.lms_OneLLM/.env.org, 5.lms_MultiLLM/.env.org, 8.vllm_MultiLLM/.env.org·qwen38-27b.env.org (커밋됨)
 .env
 .env.*
 !.env.example
@@ -41,6 +41,8 @@ PROMPTS.md
 3.ollama_External/.env
 4.1.lms_OneLLM/.env
 5.lms_MultiLLM/.env
+8.vllm_MultiLLM/.env
+8.vllm_MultiLLM/logs/
 *.local
 
 # Logs

@@ -1,0 +1,62 @@
+# 8.vllm_MultiLLM 게이트웨이 설정 (5.lms_MultiLLM 템플릿 계승)
+#   envsubst 대상: 없음 (백엔드 포트 8000 고정). nginx 자체 $변수는 그대로 보존된다.
+#   이 파일은 /etc/nginx/conf.d/default.conf 로 전개되어 http{} 컨텍스트 안에 포함됨.
+#
+# 분산 전략: X-Session 헤더 consistent hash 로 세션↔백엔드를 고정(affinity)한다.
+#   헤더 없는 요청(curl 등)은 $request_id 로 랜덤 분산.
+#   복제본 목록은 gateway-upstreams.sh 가 기동 시 vllm-upstreams.conf 로 생성한다 —
+#   `server vllm:8000 resolve;` 한 줄로 두면 hash 가 라운드로빈으로 떨어진다(실측, 스크립트 머리말).
+#   각 server 는 `resolve` 라 복제본 재생성으로 IP 가 바뀌어도 Docker DNS(127.0.0.11)로 따라간다.
+#   vLLM 은 --enable-prefix-caching 으로 같은 백엔드의 후속 턴 프롬프트 재계산을 건너뛰므로
+#   세션 고정이 곧 prefill 절감이다 (백엔드가 바뀌면 전체 컨텍스트를 다시 계산).
+
+resolver 127.0.0.11 valid=5s ipv6=off;
+
+# 해시 키: X-Session 헤더 있으면 그 값(세션 고정), 없으면 요청마다 랜덤(분산 유지)
+map $http_x_session $vllm_session_key {
+    ""      $request_id;
+    default $http_x_session;
+}
+
+upstream vllm_backends {
+    zone vllm_zone 64k;                  # resolve 사용 시 필수(공유 메모리 존)
+    hash $vllm_session_key consistent;   # 같은 세션 키 → 항상 같은 백엔드
+    include /etc/nginx/vllm-upstreams.conf;   # 복제본별 "server <이름>:8000 resolve;" (gateway-upstreams.sh)
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    # claude 의 시스템+도구 스키마 페이로드가 큼 → 본문 상한 확대
+    client_max_body_size 64m;
+
+    # 어느 백엔드가 응답했는지 노출 — 분산·고정 검증용(test.sh)
+    add_header X-Upstream $upstream_addr always;
+
+    # 게이트웨이 자체 생존 확인 (백엔드 무관)
+    location = /gw-health {
+        access_log off;
+        return 200 "ok\n";
+    }
+
+    location / {
+        proxy_pass http://vllm_backends;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+
+        # SSE 스트리밍: 버퍼링 OFF + 타임아웃 대폭 상향 (claude 토큰 스트림 보존)
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        chunked_transfer_encoding on;
+
+        # 백엔드 로드 중·일시 오류 시 다음 주소로 폴백
+        proxy_connect_timeout 5s;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+}

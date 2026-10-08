@@ -1,0 +1,141 @@
+name: ${COMPOSE_PROJECT_NAME:-air_gap_claude_code_vllm_multi}
+
+services:
+  # ── 게이트웨이 (nginx L7 분산, 단일 외부 주소) ──────────────────────────────
+  gateway:
+    image: ${GATEWAY_IMAGE:-vllm-gateway:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: ${GATEWAY_CONTAINER_NAME:-vllm-gateway}
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ:-Asia/Seoul}
+    ports:
+      # 외부 노출은 GATEWAY_PORT, 컨테이너 내부는 8080 고정
+      - "${GATEWAY_PORT:-8080}:8080"
+    depends_on:
+      vllm:
+        condition: service_healthy
+    # /v1/models 는 백엔드가 응답해야 200 → claude 기동 게이팅
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/v1/models"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - vllm
+
+  # ── vLLM 백엔드 풀 — 복제 수는 VLLM_REPLICAS (또는 'up --scale vllm=N') ─────
+  #    container_name 미지정: 다중 복제를 위해 compose 자동 네이밍 사용
+  vllm:
+    image: ${VLLM_IMAGE:-vllm-turboquant:v0.30.0-cu129}
+    build:
+      context: .
+      dockerfile: Dockerfile.vllm
+      args:
+        BASE_IMAGE: vllm/vllm-openai:v0.30.0-cu129
+    restart: unless-stopped
+    ipc: host
+    environment:
+      - VLLM_MODEL=${VLLM_MODEL}
+      - SERVED_MODEL_NAME=${SERVED_MODEL_NAME:-local-llm}
+      - KV_CACHE_DTYPE=${KV_CACHE_DTYPE:-turboquant_4bit_nc}
+      - MAX_MODEL_LEN=${MAX_MODEL_LEN:-32768}
+      - MAX_NUM_SEQS=${MAX_NUM_SEQS:-4}
+      - MAX_NUM_BATCHED_TOKENS=${MAX_NUM_BATCHED_TOKENS:-2048}
+      - GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION:-0.45}
+      - CPU_OFFLOAD_GB=${CPU_OFFLOAD_GB:-0}
+      - REASONING_PARSER=${REASONING_PARSER:-}
+      - TOOL_CALL_PARSER=${TOOL_CALL_PARSER:-}
+      - VLLM_EXTRA_ARGS=${VLLM_EXTRA_ARGS:-}
+      - VLLM_STARTUP_LOCK=${VLLM_STARTUP_LOCK:-1}
+      - VLLM_OFFLINE=${VLLM_OFFLINE:-0}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - HF_HOME=/root/.cache/huggingface
+      - TZ=${TZ:-Asia/Seoul}
+      # 구형 드라이버(525, CUDA 12.0) 우회 3종 — 드라이버 575+ 면 불필요 (README «구형 드라이버» 절)
+      - NVIDIA_DISABLE_REQUIRE=${NVIDIA_DISABLE_REQUIRE:-1}
+      - CUDA_MODULE_LOADING=LAZY
+      - VLLM_USE_FLASHINFER_SAMPLER=0
+    volumes:
+      # 모델 저장소: 호스트 경로면 그 HF 캐시 공유, 비우면 named volume(hf-cache) — 전 복제본 공유
+      - ${HF_CACHE_DIR:-hf-cache}:/root/.cache/huggingface
+      # torch.compile·CUDA graph 캐시 → 재기동 시 컴파일 생략
+      - ${VLLM_CACHE_DIR:-vllm-cache}:/root/.cache/vllm
+      # 복제본 기동 직렬화 잠금 (entrypoint.vllm.sh)
+      - vllm-locks:/locks
+    deploy:
+      replicas: ${VLLM_REPLICAS:-2}
+      resources:
+        reservations:
+          devices:
+            # 모든 복제본이 같은 GPU 집합을 본다 — GPU 1장 분할이면 GPU_MEMORY_UTILIZATION 합 ≤ 0.9
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # 앞 복제본 로드를 기다리는 시간 + 첫 기동 시 모델 다운로드·CUDA graph 캡처
+      start_period: 1800s
+    networks:
+      - vllm
+
+  # ── Claude Code 클라이언트 — 게이트웨이 단일 주소에 직결 ────────────────────
+  claude:
+    image: ${CLAUDE_IMAGE:-vllm-claude:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.claude
+      args:
+        USER_UID: ${USER_UID:-1000}
+        USER_GID: ${USER_GID:-1000}
+    container_name: ${CLAUDE_CONTAINER_NAME:-vllm-claude}
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - ${DF_DIR:-~/df}:/home/ubuntu/df
+      - claude-home:/home/ubuntu
+    environment:
+      # vLLM 의 Anthropic Messages API(/v1/messages) 직결 — 게이트웨이는 분산만 한다
+      - ANTHROPIC_BASE_URL=http://${GATEWAY_CONTAINER_NAME:-vllm-gateway}:8080
+      - ANTHROPIC_AUTH_TOKEN=vllm
+      - ANTHROPIC_MODEL=${SERVED_MODEL_NAME:-local-llm}
+      # 백그라운드(haiku 급) 호출도 같은 모델로 — 없으면 claude-haiku-* 를 요청해 404
+      - ANTHROPIC_SMALL_FAST_MODEL=${SERVED_MODEL_NAME:-local-llm}
+      - ANTHROPIC_DEFAULT_HAIKU_MODEL=${SERVED_MODEL_NAME:-local-llm}
+      # 실제 컨텍스트 창 — 카탈로그에 없는 모델은 Claude Code 가 200k 로 가정하고 경고한다(2.1.29x 실측).
+      #   MAX_MODEL_LEN 을 알려 줘야 auto-compact 가 그 안에서 동작한다
+      - CLAUDE_CODE_MAX_CONTEXT_TOKENS=${MAX_MODEL_LEN:-32768}
+      # 출력 토큰 상한 — input+output 이 MAX_MODEL_LEN 안에 들어가야 함 (넘으면 vLLM 400)
+      - CLAUDE_CODE_MAX_OUTPUT_TOKENS=${CLAUDE_MAX_OUTPUT_TOKENS:-8192}
+      # 추론 effort — Claude Code 기본값 high 는 output_config.effort → vLLM reasoning_effort 로 chat template 에 간다.
+      #   Qwen3.8 템플릿은 xhigh·medium·low 만 받아 high 면 400 (fg1 실측). 템플릿이 무시하는 모델(Qwen3-4B 등)엔 영향 없음
+      - CLAUDE_CODE_EFFORT_LEVEL=${CLAUDE_EFFORT_LEVEL:-medium}
+      # 프롬프트 다이어트 (entrypoint.sh 가 settings.json 에 deny 반영, 1=핵심 도구만)
+      - CLAUDE_DIET=${CLAUDE_DIET:-1}
+      - GW_HOST=${GATEWAY_CONTAINER_NAME:-vllm-gateway}
+      - GW_PORT=8080
+      - API_TIMEOUT_MS=${API_TIMEOUT_MS:-600000}
+      - CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+      - TZ=${TZ:-Asia/Seoul}
+    tty: true
+    stdin_open: true
+    networks:
+      - vllm
+
+volumes:
+  claude-home:
+  hf-cache:
+  vllm-cache:
+  vllm-locks:
+
+networks:
+  vllm:
+    name: ${VLLM_NETWORK_NAME:-vllm}

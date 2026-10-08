@@ -16,6 +16,7 @@ date: 2026-05-07
 | `4.1.lms_OneLLM`          | lms + claude 2개      | LM Studio(headless lms CLI) 단일 백엔드 + Claude Code 직결. `5.lms_MultiLLM`(GW+다중) 청사진 |
 | `5.lms_MultiLLM`        | gateway + lms×N + claude | 게이트웨이(nginx) 단일 주소 경유로 N개 LMS 백엔드에 다세션 분산 (`--scale lms=N`). 수평 확장. **온라인 빌드 머신용** |
 | `6.lms_MultiLLM_run`    | gateway + lms×N + claude | **★ 폐쇄망 반입 산출물.** 5번을 `docker compose` 없이 순수 `docker run` 으로 재구성 — compose 미설치 환경 대응. 세션 고정(X-Session)·프롬프트 다이어트 포함. **2026-07 반입 실패 후 5단계 절차적 검증 체계로 재구성** |
+| `8.vllm_MultiLLM`       | gateway + vllm×N + claude | 5번 구조에서 백엔드만 **vLLM 0.30**으로 교체. KV cache **TurboQuant** 압축, Anthropic `/v1/messages` 직결, X-Session 세션 고정, 복제본 순차 로드. 16GB 1장에 소형 ×2 또는 27B GGUF ×1. 상세 [8.vllm_MultiLLM/README.md](8.vllm_MultiLLM/README.md) |
 
 > **폐쇄망에 반입할 폴더는 `6.lms_MultiLLM_run` 하나입니다.** 1~5번은 온라인 머신에서
 > 이미지를 만들고 검증하는 용도입니다. 반입 절차는 [`6.lms_MultiLLM_run/README.md`](6.lms_MultiLLM_run/README.md) 참조.
