@@ -13,20 +13,25 @@ GW_PORT="${GW_PORT:-8080}"
 #   19,385→3,041 토큰(-84%), 로컬 LLM 왕복 3.7~6.8배 단축 실측(benchmark_lms_report.md).
 #   deny 는 블랙리스트라 Claude Code 버전업으로 새 도구가 생기면 자동 포함됨 — 주기 재검증 필요.
 #   CLAUDE_DIET=0 이면 비활성(전체 24개 도구).
+#   ⚠️ WebSearch/WebFetch 는 다이어트와 무관하게 **항상** deny — 폐쇄망에서 외부망 도구를
+#      켜두면 모델이 호출→실패→재시도 루프에 빠짐. CLAUDE_DIET=0 으로도 열리지 않게 분리함.
 CLAUDE_DIET="${CLAUDE_DIET:-1}"
-DIET_BLOCK=""
+AIRGAP_DENY='"WebSearch", "WebFetch"'
 if [ "$CLAUDE_DIET" != "0" ]; then
-  DIET_BLOCK=',
+  DENY_LIST="\"Workflow\", \"Agent\", \"CronCreate\", \"CronDelete\", \"CronList\",
+      \"ScheduleWakeup\", \"EnterWorktree\", \"ExitWorktree\",
+      \"TaskCreate\", \"TaskUpdate\", \"TaskGet\", \"TaskList\", \"TaskOutput\", \"TaskStop\",
+      \"SendMessage\", \"NotebookEdit\", \"Skill\",
+      ${AIRGAP_DENY}"
+else
+  DENY_LIST="${AIRGAP_DENY}"
+fi
+DIET_BLOCK=',
   "permissions": {
     "deny": [
-      "Workflow", "Agent", "CronCreate", "CronDelete", "CronList",
-      "ScheduleWakeup", "EnterWorktree", "ExitWorktree",
-      "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
-      "SendMessage", "ReportFindings", "NotebookEdit",
-      "WebSearch", "WebFetch", "Skill"
+      '"${DENY_LIST}"'
     ]
   }'
-fi
 
 # claude settings.json 생성 (게이트웨이 단일 주소 반영)
 mkdir -p "$HOME/.claude"
@@ -69,5 +74,21 @@ AFFINITY_LINE='export ANTHROPIC_CUSTOM_HEADERS="X-Session: cc-$$-$RANDOM"'
 for rc in "$HOME/.bashrc" "$HOME/.profile"; do
   grep -qs 'ANTHROPIC_CUSTOM_HEADERS' "$rc" || echo "$AFFINITY_LINE" >> "$rc"
 done
+
+# rc 파일은 로그인/대화형 셸에서만 읽힌다 — 'docker exec -it claude claude' 처럼 셸을
+#   거치지 않는 진입은 헤더 없이 나가고, 게이트웨이가 $request_id 로 해시해 매 턴 다른
+#   백엔드로 흩어진다(전체 컨텍스트 재프리필, 30k 기준 ~13배). 에러 없이 느려지기만 해서
+#   발견이 어렵다. PATH 선순위 shim 으로 어떤 진입 경로에서도 헤더를 보장한다.
+#   ⚠️ settings.json 의 env 가 셸 export 보다 우선한다(실측). 따라서 여기에 정적 헤더를
+#      넣으면 안 된다 — 모든 세션이 한 백엔드에 고정돼 분산이 죽는다. shim 은 프로세스
+#      환경변수만 세팅하므로 세션별 고유값이 유지된다.
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/claude" <<'SHIM'
+#!/bin/bash
+# X-Session affinity shim — 이미 설정돼 있으면(대화형 셸 경유) 그 값을 존중한다.
+[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ] || export ANTHROPIC_CUSTOM_HEADERS="X-Session: cc-$$-$RANDOM"
+exec /usr/bin/claude "$@"
+SHIM
+chmod +x "$HOME/.local/bin/claude"
 
 exec "$@"

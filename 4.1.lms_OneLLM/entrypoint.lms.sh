@@ -77,10 +77,40 @@ if [ -n "${LMS_MODEL:-}" ]; then
   #   기본값(4)이면 슬롯당 ctx/4 (32k→8k). Claude Code 시스템 프롬프트(~16k)가 슬롯을
   #   초과해 500 (n_keep >= n_ctx) 발생. Claude Code 용도면 1 필수.
   [ -n "${LMS_PARALLEL:-}" ] && LOAD_OPTS="$LOAD_OPTS --parallel ${LMS_PARALLEL}"
-  echo "[lms] ensuring model present: ${LMS_MODEL}"
-  lms get -y "${LMS_MODEL}" || echo "[lms] WARNING: 'lms get' failed (이미 보유했거나 식별자 확인 필요)"
+  # 모델 확보 — ⚠️ 폐쇄망 필수 처리.
+  #   'lms get' 은 로컬에 모델이 있어도 LM Studio 허브에 존재 확인을 보냄.
+  #   blackhole 방화벽(패킷 drop) 환경에서는 '실패'가 아니라 수 분간 hang 하므로
+  #   '|| echo' 폴백이 작동하지 않고 아래 'lms load' 까지 도달하지 못함
+  #   → 백엔드는 떠 있는데 모델만 없는 조용한 부분 실패 발생 (2026-07-18 실측).
+  #   대책 ① 로컬 보유 시 건너뜀  ② 그래도 호출 시 timeout 으로 상한.
+  #   LMS_SKIP_GET=1 이면 무조건 건너뜀 (완전 폐쇄망 권장).
+  if [ "${LMS_SKIP_GET:-0}" = "1" ]; then
+    echo "[lms] LMS_SKIP_GET=1 — 'lms get' 건너뜀 (로컬 모델만 사용)"
+  elif lms ls 2>/dev/null | grep -qiF "${LMS_MODEL##*/}"; then
+    # stem(마지막 경로조각)으로 검사 — 로컬 키가 허브 키와 다를 수 있음(아래 폴백 주석 참조)
+    echo "[lms] model already present locally — 'lms get' 건너뜀: ${LMS_MODEL}"
+  else
+    echo "[lms] ensuring model present: ${LMS_MODEL} (timeout ${LMS_GET_TIMEOUT:-60}s)"
+    timeout "${LMS_GET_TIMEOUT:-60}" lms get -y "${LMS_MODEL}" \
+      || echo "[lms] WARNING: 'lms get' 실패/타임아웃 — 로컬 모델로 로드 시도 (폐쇄망이면 정상)"
+  fi
   echo "[lms] loading model: ${LMS_MODEL} (opts: ${LOAD_OPTS})"
-  lms load "${LMS_MODEL}" ${LOAD_OPTS} || echo "[lms] WARNING: model load failed - container stays up for manual 'lms load'"
+  if ! lms load "${LMS_MODEL}" ${LOAD_OPTS}; then
+    # 폐쇄망 폴백 — 허브 키가 로컬에서 해석되지 않는 경우가 있음.
+    #   매니페스트 없이 gguf 만 반입한 모델은 'lms ls' 가 파일명 기반 키로 표시함
+    #   (예: 허브 키 google/gemma-4-e2b → 로컬 키 gemma-4-e2b-it). 2026-07-18 실측.
+    #   LMS_MODEL 의 마지막 경로조각을 stem 으로 잡아 로컬 키를 역탐색해 재시도.
+    STEM="${LMS_MODEL##*/}"
+    ALT="$(lms ls 2>/dev/null | awk -v s="$STEM" 'tolower($1) ~ tolower(s) {print $1; exit}')"
+    if [ -n "$ALT" ] && [ "$ALT" != "${LMS_MODEL}" ]; then
+      echo "[lms] 허브 키 로드 실패 → 로컬 키로 재시도: ${ALT}"
+      lms load "$ALT" ${LOAD_OPTS} \
+        && echo "[lms] NOTE: 실제 로드된 키는 '${ALT}' — 클라이언트의 ANTHROPIC_MODEL 도 이 값이어야 함" \
+        || echo "[lms] WARNING: model load failed - container stays up for manual 'lms load'"
+    else
+      echo "[lms] WARNING: model load failed - container stays up for manual 'lms load'"
+    fi
+  fi
 else
   echo "[lms] WARNING: LMS_MODEL empty - skipping load (use 'docker exec ... lms load <model>')"
 fi

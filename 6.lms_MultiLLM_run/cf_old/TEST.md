@@ -55,7 +55,7 @@ docker exec -it lms-N bash -lc 'lms log stream --source server'
 ```
 
 * VRAM 은 판별 수단이 아님 — 선할당이라 처리 중에도 불변 (실측 180샘플 단일값).
-* 세션↔백엔드 고정 매핑 없음 (요청 단위 라운드로빈) + nginx DNS 캐시 5초 유의.
+* 세션 고정: `X-Session` 헤더가 있으면 그 세션은 한 백엔드에 고정(6절 참조), 헤더 없는 요청만 요청 단위 분산.
 
 ## 4) 32k 초과 컨텍스트 (needle 테스트)
 
@@ -100,7 +100,7 @@ docker exec claude bash -lc 'echo $ANTHROPIC_CUSTOM_HEADERS'   # 기대: X-Sessi
 ## 7) 프롬프트 다이어트 (CLAUDE_DIET=1 기본 — 2026-07-17 패치)
 
 ```bash
-docker exec claude cat /home/ubuntu/.claude/settings.json   # 기대: permissions.deny 20개
+docker exec claude cat /home/ubuntu/.claude/settings.json   # 기대: permissions.deny 19개
 # 백엔드 로그에서 프롬프트 크기 확인 — diet ≈3k 토큰 (full ≈19.4k)
 docker exec claude bash -lc 'claude -p "12*34는? 숫자만."'
 docker logs lms-1 2>&1 | grep -o 'n_tokens = [0-9]*' | tail -2   # (lms-2 도 확인)
@@ -111,5 +111,5 @@ docker logs lms-1 2>&1 | grep -o 'n_tokens = [0-9]*' | tail -2   # (lms-2 도 �
 
 ```bash
 ./start.sh --stop
-# 31b 단일 백엔드 복귀: 6.lms_MultiLLM_run_backup/.env 복사 후 ./start.sh
+# 31b 단일 백엔드 복귀: cp .env.org .env && ./start.sh   (.env.org = 31b·lms:latest 운영 기본값)
 ```

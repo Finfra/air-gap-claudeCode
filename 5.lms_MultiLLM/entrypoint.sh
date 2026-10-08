@@ -13,20 +13,25 @@ GW_PORT="${GW_PORT:-8080}"
 #   19,385→3,041 토큰(-84%), 로컬 LLM 왕복 3.7~6.8배 단축 실측(benchmark_lms_report.md).
 #   deny 는 블랙리스트라 Claude Code 버전업으로 새 도구가 생기면 자동 포함됨 — 주기 재검증 필요.
 #   CLAUDE_DIET=0 이면 비활성(전체 24개 도구).
+#   ⚠️ WebSearch/WebFetch 는 다이어트와 무관하게 **항상** deny — 폐쇄망에서 외부망 도구를
+#      켜두면 모델이 호출→실패→재시도 루프에 빠짐. CLAUDE_DIET=0 으로도 열리지 않게 분리함.
 CLAUDE_DIET="${CLAUDE_DIET:-1}"
-DIET_BLOCK=""
+AIRGAP_DENY='"WebSearch", "WebFetch"'
 if [ "$CLAUDE_DIET" != "0" ]; then
-  DIET_BLOCK=',
+  DENY_LIST="\"Workflow\", \"Agent\", \"CronCreate\", \"CronDelete\", \"CronList\",
+      \"ScheduleWakeup\", \"EnterWorktree\", \"ExitWorktree\",
+      \"TaskCreate\", \"TaskUpdate\", \"TaskGet\", \"TaskList\", \"TaskOutput\", \"TaskStop\",
+      \"SendMessage\", \"NotebookEdit\", \"Skill\",
+      ${AIRGAP_DENY}"
+else
+  DENY_LIST="${AIRGAP_DENY}"
+fi
+DIET_BLOCK=',
   "permissions": {
     "deny": [
-      "Workflow", "Agent", "CronCreate", "CronDelete", "CronList",
-      "ScheduleWakeup", "EnterWorktree", "ExitWorktree",
-      "TaskCreate", "TaskUpdate", "TaskGet", "TaskList", "TaskOutput", "TaskStop",
-      "SendMessage", "ReportFindings", "NotebookEdit",
-      "WebSearch", "WebFetch", "Skill"
+      '"${DENY_LIST}"'
     ]
   }'
-fi
 
 # claude settings.json 생성 (게이트웨이 단일 주소 반영)
 mkdir -p "$HOME/.claude"

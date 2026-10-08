@@ -40,10 +40,12 @@ mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
 case "$ACTION" in
   on)
     # 게이트웨이 응답 확인 (경고만)
-    if curl -fsS "http://127.0.0.1:${GATEWAY_PORT}/v1/models" >/dev/null 2>&1; then
-      echo "[+] 게이트웨이 응답 OK: http://127.0.0.1:${GATEWAY_PORT}/v1/models"
+    # ⚠️ 반드시 $BASE_URL(=LMS_HOST 반영) 로 검사할 것. 127.0.0.1 하드코딩하면
+    #    원격 PC 에서 LMS_HOST=<서버IP> 로 실행해도 자기 자신을 찔러 오경고가 뜸.
+    if curl -fsS "${BASE_URL}/v1/models" >/dev/null 2>&1; then
+      echo "[+] 게이트웨이 응답 OK: ${BASE_URL}/v1/models"
     else
-      echo "[!] 게이트웨이 무응답(http://127.0.0.1:${GATEWAY_PORT}). 먼저 ./start.sh 로 기동하세요. (계속 진행)"
+      echo "[!] 게이트웨이 무응답(${BASE_URL}). 서버에서 ./start.sh 기동 + 방화벽 ${GATEWAY_PORT}/tcp 허용을 확인하세요. (계속 진행)"
     fi
     [ -n "$LMS_MODEL" ] || { echo "[!] .env 의 LMS_MODEL 이 비어있음"; exit 1; }
 
@@ -85,8 +87,8 @@ case "$ACTION" in
   status)
     echo "대상: $CLAUDE_SETTINGS"
     jq '{model, env: (.env // {} | {ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, API_TIMEOUT_MS, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC})}' "$CLAUDE_SETTINGS"
-    echo "게이트웨이(:$GATEWAY_PORT) 응답:"
-    curl -fsS "http://127.0.0.1:${GATEWAY_PORT}/v1/models" 2>/dev/null | jq -r '.data[].id' | sed 's/^/  - /' || echo "  (무응답)"
+    echo "게이트웨이(${BASE_URL}) 응답:"
+    curl -fsS "${BASE_URL}/v1/models" 2>/dev/null | jq -r '.data[].id' | sed 's/^/  - /' || echo "  (무응답)"
     ;;
 
   *) echo "usage: $0 {on|off|status}"; exit 2 ;;

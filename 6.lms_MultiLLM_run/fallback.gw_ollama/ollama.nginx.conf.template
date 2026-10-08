@@ -1,0 +1,49 @@
+# fallback 게이트웨이 설정 — nginx → ollama (OpenAI /v1 호환)
+#   envsubst 대상: ${OLLAMA_UPSTREAM} 하나뿐. nginx 자체 변수($host 등)는 env 에 없으므로 보존됨.
+#   이 파일은 lms-gateway:latest 이미지의 /etc/nginx/templates/default.conf.template 로 마운트되어
+#   기동 시 /etc/nginx/conf.d/default.conf 로 전개된다. (이미지·envsubst 메커니즘은 lms 게이트웨이와 동일)
+#
+# ── lms 게이트웨이와의 차이 ──────────────────────────────────────────────────
+#   백엔드가 ollamawebui 단일 컨테이너이므로 consistent hash 세션 고정(affinity)이 불필요하다.
+#   → map/upstream hash 를 제거하고 단일 upstream 으로 단순화했다.
+#   ollama 는 자체적으로 요청을 큐잉(OLLAMA_NUM_PARALLEL)하므로 게이트웨이는 순수 프록시만 한다.
+#
+# ── 이름 해석 ────────────────────────────────────────────────────────────────
+#   OLLAMA_UPSTREAM 이 컨테이너명(ollamawebui:11434)이든 호스트IP(172.17.0.1:11434)든
+#   nginx 가 기동 시 1회 해석한다(resolver·resolve 키워드 없음 — 단일 백엔드라 불필요).
+#   ⚠️ 이 방식은 기동 시점 IP 를 고정한다. ollamawebui 를 재생성해 IP 가 바뀌면
+#      게이트웨이도 재시작해야 한다(serve-ollama.sh 로 재실행). 단일 백엔드 fallback 에선 수용 가능.
+
+upstream ollama_backend {
+    server ${OLLAMA_UPSTREAM};
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    # 클라이언트(Claude Code 등)의 시스템+도구 스키마 페이로드가 큼 → 본문 상한 확대
+    client_max_body_size 64m;
+
+    location / {
+        proxy_pass http://ollama_backend;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+
+        # SSE 스트리밍: 버퍼링 OFF + 타임아웃 상향.
+        #   기본 proxy_buffering on 이면 /v1/chat/completions 의 토큰 스트림이 버퍼링되어 깨진다.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+
+        # 첫 요청은 ollama 가 모델을 콜드 로드하므로 느리다 → read/send 타임아웃 대폭 상향.
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        chunked_transfer_encoding on;
+
+        proxy_connect_timeout 5s;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+}

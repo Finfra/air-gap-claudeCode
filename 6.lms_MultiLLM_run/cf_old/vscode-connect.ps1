@@ -106,9 +106,17 @@ switch ($Action) {
     if ($cfg.env) {
       'ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','API_TIMEOUT_MS','CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC' |
         ForEach-Object { Remove-Prop $cfg.env $_ }
-      if ($cfg.env.PSObject.Properties.Count -eq 0) { Remove-Prop $cfg 'model'; Remove-Prop $cfg 'env' }
+      if ($cfg.env.PSObject.Properties.Count -eq 0) { Remove-Prop $cfg 'env' }
     }
-    Remove-Prop $cfg 'model'
+    # model 은 '우리가 넣은 값일 때만' 제거 — sh 판(jq: if .model == $model)과 동일 동작.
+    #   무조건 제거하면 on 실행 전부터 있던 사용자 설정(예: "model": "opus")을 말없이 날린다.
+    #   -Model 은 off 에서 필수가 아니므로, 미지정이면 판별 불가 → 건드리지 않고 알린다.
+    if ($Model) {
+      if ($cfg.model -eq $Model) { Remove-Prop $cfg 'model' }
+      else { Write-Host "[i] model='$($cfg.model)' 은 우리가 넣은 값이 아니라 보존함" }
+    } elseif ($cfg.model) {
+      Write-Host "[i] model='$($cfg.model)' 보존 — 제거하려면 '-Model $($cfg.model)' 로 다시 실행"
+    }
     Save-Json $cfg $Settings
     Write-Host "[+] 연결 해제(우리가 넣은 키 제거) -> $Settings"
     Write-Host "      (전체 복원: Copy-Item '$Settings.bak' '$Settings')"

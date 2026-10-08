@@ -14,7 +14,27 @@ date: 2026-05-07
 | `2.ollama_TwoContainer` | 분리 컨테이너 2개     | 운영·다중 클라이언트. Ollama 서비스를 독립시켜 재시작·공유 용이   |
 | `3.ollama_External`     | claude 컨테이너 1개   | 호스트/서버에 이미 설치된 외부 Ollama 에 claude 컨테이너만 연결 (일반 방식) |
 | `4.1.lms_OneLLM`          | lms + claude 2개      | LM Studio(headless lms CLI) 단일 백엔드 + Claude Code 직결. `5.lms_MultiLLM`(GW+다중) 청사진 |
-| `5.lms_MultiLLM`        | gateway + lms×N + claude | 게이트웨이(nginx) 단일 주소 경유로 N개 LMS 백엔드에 다세션 분산 (`--scale lms=N`). 수평 확장 |
+| `5.lms_MultiLLM`        | gateway + lms×N + claude | 게이트웨이(nginx) 단일 주소 경유로 N개 LMS 백엔드에 다세션 분산 (`--scale lms=N`). 수평 확장. **온라인 빌드 머신용** |
+| `6.lms_MultiLLM_run`    | gateway + lms×N + claude | **★ 폐쇄망 반입 산출물.** 5번을 `docker compose` 없이 순수 `docker run` 으로 재구성 — compose 미설치 환경 대응. 세션 고정(X-Session)·프롬프트 다이어트 포함. **2026-07 반입 실패 후 5단계 절차적 검증 체계로 재구성** |
+
+> **폐쇄망에 반입할 폴더는 `6.lms_MultiLLM_run` 하나입니다.** 1~5번은 온라인 머신에서
+> 이미지를 만들고 검증하는 용도입니다. 반입 절차는 [`6.lms_MultiLLM_run/README.md`](6.lms_MultiLLM_run/README.md) 참조.
+
+## 6.lms_MultiLLM_run 단계별 검증 (Issue18)
+
+2026-07 반입이 실패(Windows 스크립트 오동작 / 시작 `run` 명령 미동작 / 게이트웨이 경유 실패)하여, **변수를 하나씩만 추가하는 5단계 검증**으로 재구성했습니다. 각 단계는 직전 단계의 게이트 통과가 전제이며, 이전 반입본은 `6.lms_MultiLLM_run/cf_old/` 에 대조군으로 보존합니다.
+
+| 단계 | 경로도 | README |
+| :--- | :----- | :----- |
+| 1 | docker cc → 호스트 LMS | [step1.cc_to_lms/README.md](6.lms_MultiLLM_run/step1.cc_to_lms/README.md) |
+| 2 | docker cc → docker lms | [step2.cc_to_lmsDocker/README.md](6.lms_MultiLLM_run/step2.cc_to_lmsDocker/README.md) |
+| 3 | docker cc → docker gateway → docker lms | [step3.cc_gw_lms/README.md](6.lms_MultiLLM_run/step3.cc_gw_lms/README.md) |
+| 4 | docker cc → gateway → lms-1, lms-2 | [step4.cc_gw_lms2/README.md](6.lms_MultiLLM_run/step4.cc_gw_lms2/README.md) |
+| 5 | windows cc → gateway → lms-1, lms-2 | [step5.win_gw_lms2/README.md](6.lms_MultiLLM_run/step5.win_gw_lms2/README.md) |
+
+* 설계 SSOT: [_doc_arch/airgap-staged-test-design.md](_doc_arch/airgap-staged-test-design.md)
+* 반입 이미지: `lms:latest`=step3 통과본 / `lms-gateway:latest`·`claude:latest`=step4 통과본
+* Windows 클라이언트는 **PowerShell 스크립트를 쓰지 않고** 설정 파일 + 수동 매뉴얼로 연결합니다
 
 공통 사전 요구사항:
 * Docker / Docker Compose (v2 권장 — `.env` 자동 로드 + 틸드 확장 지원)
@@ -206,7 +226,10 @@ cc          # alias = claude --dangerously-skip-permissions
 
 > **실기동 검증됨(온라인+GPU)**: build→up→모델 다운로드(Llama-3.1-8B GGUF)→GPU 로드→크로스컨테이너 추론 왕복까지 동작 확인. LMS 는 OpenAI `/v1` 뿐 아니라 **Anthropic `/v1/messages` 도 네이티브 지원**(변환 GW 불요 실증). 단 `claude` 대화형 에이전트 루프는 8B 급 tool-use 한계로 부적합 — 에이전트 용도는 더 큰/특화 모델 필요. 상세는 폴더 [README](4.1.lms_OneLLM/README.md).
 >
-> **air-gap 주의**: 현 구현은 **온라인 빌드 전제**(`install.sh` 로 `lms` 설치, `lms get` 으로 모델 다운로드). 폐쇄망은 docker `export`+`compose` 반입 파이프라인으로 전환하며, `Dockerfile.lms` 에 오프라인 COPY 대안이 주석으로 보존됨.
+> **air-gap 주의**: 현 구현은 **온라인 빌드 전제**(`install.sh` 로 `lms` 설치, `lms get` 으로 모델 다운로드).
+> 폐쇄망 반입은 이 폴더가 아니라 **[`6.lms_MultiLLM_run`](6.lms_MultiLLM_run/README.md)** 을 사용하며,
+> 이미지는 **`docker save`** 로 만든다 — ⚠️ `docker export` 는 ENV/ENTRYPOINT 를 잃으므로 쓰면 안 됨
+> (근거: [`5.lms_MultiLLM/README.md`](5.lms_MultiLLM/README.md) 의 save vs export 절). `Dockerfile.lms` 에 오프라인 COPY 대안이 주석으로 보존됨.
 >
 > **폴더 이력 (2026-07-17)**: 온라인·fg1 운영판(구 `4.lms_OneLLM`)은 air-gap 이 아니어서 `~/_git/__all/dockers/4.lms_OneLLM` 로 이전. 본 저장소에는 air-gap 원본 `4.1.lms_OneLLM`(구 `4.1.lms_OneLLM_for_air-gap`)만 유지.
 

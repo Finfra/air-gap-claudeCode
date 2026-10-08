@@ -55,7 +55,7 @@ docker exec -it <lms-N> bash -lc 'lms log stream --source server'
 ```
 
 * VRAM 은 판별 수단이 아님 — 선할당이라 처리 중에도 불변 (실측 180샘플 단일값).
-* 세션↔백엔드 고정 매핑 없음 (요청 단위 라운드로빈) + nginx DNS 캐시 5초 유의.
+* ⚠️ 이 폴더(5판)의 nginx 는 `server lms:PORT resolve` 단일 엔트리라 **세션 고정이 성립하지 않음**(요청 단위 라운드로빈). 세션 고정이 필요하면 `6.lms_MultiLLM_run` 방식(개별 `server lms-1..N` 엔트리 + consistent hash)을 쓸 것 — 2026-07-18 실측.
 
 ## 4) 32k 초과 컨텍스트 (needle 테스트)
 

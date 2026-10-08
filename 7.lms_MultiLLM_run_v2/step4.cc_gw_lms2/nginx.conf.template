@@ -1,0 +1,77 @@
+# 5.lms_MultiLLM 게이트웨이 설정
+#   envsubst 대상: ${LMS_PORT} 만 (nginx 자체 $변수 $host/$http_x_session 등은 보존됨).
+#   이 파일은 /etc/nginx/conf.d/default.conf 로 전개되어 http{} 컨텍스트 안에 포함됨.
+#
+# 분산 전략: Docker 임베디드 DNS(127.0.0.11) + upstream resolve (nginx 1.27.3+).
+#   'lms' 별칭의 N개 복제본을 DNS 로 자동 반영하되, X-Session 헤더 consistent hash 로
+#   세션↔백엔드 고정(affinity). 헤더 없는 요청(curl 등)은 $request_id 로 랜덤 분산.
+#
+#   근거(실측, _doc_work/report/lms-affinity-test_report.md):
+#     요청 단위 라운드로빈이면 백엔드 스위치 턴마다 전체 컨텍스트 재프리필 —
+#     30k 토큰 기준 6.2s vs 0.49s (~13배). CC 클라이언트는 entrypoint.sh 가
+#     셸별 고유 ANTHROPIC_CUSTOM_HEADERS="X-Session: ..." 를 주입.
+
+# ⚠️ 단일 'server lms:1234 resolve' 로 DNS 복제본을 쓰면 nginx 가 해석된 IP 들을
+#    hash 대상으로 구분하지 못하고 라운드로빈함 → affinity 무효(실측 확인 2026-07-18).
+#    consistent hash 는 개별 server 엔트리(lms-1..N)가 있어야 세션 고정이 성립함.
+#    아래 upstream 의 server 목록은 start.sh 가 LMS_BACKEND_COUNT 에 맞춰 생성·주입함
+#    (envsubst 가 주석 안의 변수 리터럴도 치환하므로 여기에 그 변수명을 그대로 쓰지 말 것).
+resolver 127.0.0.11 valid=5s ipv6=off;
+
+# 해시 키: X-Session 헤더 있으면 그 값(세션 고정), 없으면 요청마다 랜덤(분산 유지)
+map $http_x_session $lms_session_key {
+    ""      $request_id;
+    default $http_x_session;
+}
+
+upstream lms_backends {
+    # zone + 각 server 의 resolve 는 한 쌍 — resolve 단독은 'requires upstream to be in
+    #   shared memory' 로 기동 실패. 둘 다 있어야 이름을 런타임에 재해석한다.
+    #   없으면 ① 재부팅 시 gateway 가 lms-N 보다 먼저 뜨면 'host not found in upstream'
+    #   으로 nginx 하드 종료 → --restart 재시작 루프, ② 백엔드 재생성으로 IP 가 바뀌면
+    #   부팅 시점 IP 를 영구 보존해 해당 백엔드로 해시된 세션이 계속 502 (실측 2026-07-18).
+    zone lms_backends 64k;
+    hash $lms_session_key consistent;   # 같은 세션 키 → 항상 같은 백엔드
+${LMS_UPSTREAM_SERVERS}
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    # claude 의 시스템+도구 스키마 페이로드가 큼 → 본문 상한 확대
+    client_max_body_size 64m;
+
+    location / {
+        proxy_pass http://lms_backends;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Connection "";
+
+        # SSE 스트리밍(B3): 버퍼링 OFF + 타임아웃 대폭 상향.
+        #   기본 proxy_buffering on 이면 claude 토큰 스트림이 버퍼링되어 깨짐.
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 600s;
+        proxy_send_timeout 600s;
+        chunked_transfer_encoding on;
+
+        # 백엔드 모델 로드 중(B7)·일시 오류 시 다음 주소로 폴백
+        proxy_connect_timeout 5s;
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+}
+
+# ── [이전 방식] 변수 proxy_pass (요청 단위 DNS 라운드로빈 — affinity 없음) ────
+#   세션 고정이 필요 없고 단순 분산만 원하면 위 map/upstream 을 지우고 아래로 교체:
+#
+#   location / {
+#       set $lms_pool lms;
+#       proxy_pass http://$lms_pool:${LMS_PORT};
+#       ...(위 SSE 설정 동일)...
+#   }
+#
+#   단점: CC 세션 후속 턴이 다른 백엔드에 떨어지면 전체 컨텍스트 재프리필(실측 ~13배).
+# ────────────────────────────────────────────────────────────────────────────

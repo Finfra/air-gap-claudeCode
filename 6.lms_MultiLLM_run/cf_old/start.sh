@@ -44,6 +44,8 @@ fi
 : "${LMS_CONTEXT_LENGTH:=32768}"
 : "${LMS_GPU:=}"          # 빈값=자동 offload (VRAM<모델크기 환경에서 max 는 CUDA OOM)
 : "${LMS_PARALLEL:=1}"    # 슬롯 분할 방지 — Claude Code 는 1 필수 (ctx/슬롯수 = 슬롯당 ctx)
+: "${LMS_SKIP_GET:=1}"    # 1=기동 시 'lms get'(허브 접속) 완전 생략 — 폐쇄망 기본값
+: "${LMS_GET_TIMEOUT:=60}"  # LMS_SKIP_GET=0 일 때 'lms get' 상한(초). blackhole 방화벽 hang 방지
 : "${LMS_MODEL_MOUNT:=lms-models}"        # 빈문자열이면 named volume, 절대경로면 bind
 : "${GATEWAY_PORT:=8080}"
 : "${LMS_BACKEND_COUNT:=2}"
@@ -57,7 +59,7 @@ fi
 
 # 이미지 태그 (air-gap 로드된 이미지 이름과 일치해야 함)
 : "${LMS_IMAGE:=lms:latest}"
-: "${GATEWAY_IMAGE:=gateway:latest}"
+: "${GATEWAY_IMAGE:=lms-gateway:latest}"
 : "${CLAUDE_IMAGE:=claude:latest}"
 
 # 옵션
@@ -129,18 +131,51 @@ else
 fi
 
 # ── 3) LMS 백엔드 N개 기동 ──────────────────────────────────────────────────
-GPU_OPT=()
-[ "$USE_GPU" = "1" ] && GPU_OPT=(--gpus all)
+# GPU 배치: 백엔드 1개당 GPU 1장 전용 할당(--gpus "device=K").
+#   '--gpus all' 을 N개 백엔드에 똑같이 주면 전원이 같은 GPU0 에 적재된다 —
+#   31b@32k ×2 ≈ 44GB 로 A6000(48GB) 92%, VRAM 83% 안전선 초과 → 장문에서 CUDA OOM.
+#   (83% 는 권고가 아니라 97% 구성에서 재현된 실측 OOM. 짧은 프롬프트는 통과하다 죽음.)
+GPU_COUNT=0
+if [ "$USE_GPU" = "1" ]; then
+  GPU_COUNT="$(nvidia-smi -L 2>/dev/null | grep -c '^GPU ' || true)"
+  : "${GPU_COUNT:=0}"
+  echo "[*] 감지된 GPU: ${GPU_COUNT}장 / 백엔드: ${LMS_BACKEND_COUNT}개"
+  if [ "$GPU_COUNT" -eq 0 ]; then
+    echo "[!] nvidia-smi 로 GPU 를 찾지 못함 — '--gpus all' 로 진행 (드라이버/toolkit 확인 필요)"
+  elif [ "$LMS_BACKEND_COUNT" -gt "$GPU_COUNT" ]; then
+    # 초과 구독 = OOM 경로. 기본은 정지시키고, 의도적일 때만 명시 승인으로 통과.
+    echo "[!] 백엔드(${LMS_BACKEND_COUNT}) > GPU(${GPU_COUNT}) — 같은 GPU 에 다중 적재되어 VRAM 초과 위험."
+    echo "    권장: .env 의 LMS_BACKEND_COUNT 를 ${GPU_COUNT} 이하로 낮출 것."
+    echo "    (VRAM 이 (모델+KV)×백엔드 를 확실히 감당한다면 LMS_ALLOW_GPU_OVERSUBSCRIBE=1 로 강행)"
+    [ "${LMS_ALLOW_GPU_OVERSUBSCRIBE:-0}" = "1" ] || exit 1
+    echo "[!] LMS_ALLOW_GPU_OVERSUBSCRIBE=1 — 초과 구독 강행. nvidia-smi 로 VRAM 감시할 것."
+  fi
+fi
 
 echo "[*] LMS 백엔드 $LMS_BACKEND_COUNT 개 기동"
 for i in $(seq 1 "$LMS_BACKEND_COUNT"); do
   NAME="lms-$i"
+  # 백엔드 i → GPU (i-1). GPU 수를 넘어서면 순환(초과 구독 승인된 경우에만 도달).
+  GPU_OPT=()
+  if [ "$USE_GPU" = "1" ]; then
+    if [ "$GPU_COUNT" -gt 0 ]; then
+      GPU_OPT=(--gpus "device=$(( (i-1) % GPU_COUNT ))")
+    else
+      GPU_OPT=(--gpus all)
+    fi
+  fi
+  # 백엔드별 호스트 포트 노출 — lms-i 를 host:$((LMS_PORT+i-1)) 로 매핑.
+  # 외부(호스트/타 머신)에서 lms-1 을 직접 때려 테스트할 수 있게 하고,
+  # 다중 백엔드 시 포트 충돌 없이 lms-2:1235, lms-3:1236... 로 확장.
+  HOST_PORT=$((LMS_PORT + i - 1))
+  PORT_OPT=(-p "${HOST_PORT}:${LMS_PORT}")
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker run -d --name "$NAME" \
     --network "$LMS_NETWORK_NAME" \
     --network-alias lms \
     --restart unless-stopped \
     "${GPU_OPT[@]}" \
+    "${PORT_OPT[@]}" \
     "${MODEL_MOUNT_OPT[@]}" \
     -v "$SCRIPT_DIR/entrypoint.lms.sh:/usr/local/bin/entrypoint.lms.sh:ro" \
     --entrypoint /usr/local/bin/entrypoint.lms.sh \
@@ -150,13 +185,19 @@ for i in $(seq 1 "$LMS_BACKEND_COUNT"); do
     -e LMS_CONTEXT_LENGTH="$LMS_CONTEXT_LENGTH" \
     -e LMS_GPU="$LMS_GPU" \
     -e LMS_PARALLEL="$LMS_PARALLEL" \
+    -e LMS_SKIP_GET="$LMS_SKIP_GET" \
+    -e LMS_GET_TIMEOUT="$LMS_GET_TIMEOUT" \
     -e TZ="$TZ" \
     "$LMS_IMAGE" >/dev/null
-  echo "  [+] $NAME 기동"
+  if [ "$USE_GPU" = "1" ] && [ "$GPU_COUNT" -gt 0 ]; then
+    echo "  [+] $NAME 기동 (GPU $(( (i-1) % GPU_COUNT )), host :${HOST_PORT})"
+  else
+    echo "  [+] $NAME 기동 (host :${HOST_PORT})"
+  fi
 done
 
 # ── 4) 각 LMS /v1/models 헬스 대기 (첫 백엔드만 정밀 대기, 나머진 확인만) ──
-echo "[*] LMS /v1/models 헬스 대기 (최대 ~120s)"
+echo "[*] LMS /v1/models 헬스 대기 (백엔드당 최대 120s, 순차 → 총 최대 $((LMS_BACKEND_COUNT*120))s)"
 WAIT_MAX=60
 for i in $(seq 1 "$LMS_BACKEND_COUNT"); do
   NAME="lms-$i"
@@ -173,6 +214,16 @@ for i in $(seq 1 "$LMS_BACKEND_COUNT"); do
 done
 
 # ── 5) 게이트웨이(nginx) 기동 ──────────────────────────────────────────────
+# upstream 서버 목록 생성 — 백엔드 이름(lms-1..N)을 명시해야 consistent hash 세션 고정이 성립.
+#   (단일 'server lms:1234 resolve' 는 DNS RR 로 affinity 무효 — nginx.conf.template 주석 참조)
+#   'resolve' 는 nginx.conf.template 의 'zone lms_backends 64k' 와 한 쌍 — 이름을 부팅
+#   시점에 고정하지 않고 런타임에 재해석해, 기동 순서 역전/백엔드 IP 변경에 견디게 한다.
+LMS_UPSTREAM_SERVERS=""
+for i in $(seq 1 "$LMS_BACKEND_COUNT"); do
+  LMS_UPSTREAM_SERVERS="${LMS_UPSTREAM_SERVERS}    server lms-$i:${LMS_PORT} resolve max_fails=3 fail_timeout=30s;
+"
+done
+
 docker rm -f "$GATEWAY_CONTAINER_NAME" >/dev/null 2>&1 || true
 docker run -d --name "$GATEWAY_CONTAINER_NAME" \
   --network "$LMS_NETWORK_NAME" \
@@ -180,6 +231,7 @@ docker run -d --name "$GATEWAY_CONTAINER_NAME" \
   -p "${GATEWAY_PORT}:8080" \
   -v "$SCRIPT_DIR/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro" \
   -e LMS_PORT="$LMS_PORT" \
+  -e LMS_UPSTREAM_SERVERS="$LMS_UPSTREAM_SERVERS" \
   -e TZ="$TZ" \
   "$GATEWAY_IMAGE" >/dev/null
 echo "[+] $GATEWAY_CONTAINER_NAME 기동 (외부 포트 :$GATEWAY_PORT)"
@@ -208,6 +260,7 @@ fi
 
 docker volume inspect "$CLAUDE_HOME_VOLUME" >/dev/null 2>&1 || docker volume create "$CLAUDE_HOME_VOLUME" >/dev/null
 
+# 개발 머신 전용 편의 마운트 — 호스트에 ~/df 가 있을 때만 붙는다(폐쇄망에선 보통 no-op).
 DF_MOUNT_OPT=()
 [ -d "$HOME/df" ] && DF_MOUNT_OPT=(-v "$HOME/df:/home/ubuntu/df")
 
@@ -221,6 +274,10 @@ docker run -d --name "$CLAUDE_CONTAINER_NAME" \
   "${CODE_MOUNT_OPT[@]}" \
   -v "$SCRIPT_DIR/entrypoint.sh:/usr/local/bin/entrypoint.sh:ro" \
   --entrypoint /usr/local/bin/entrypoint.sh \
+  `# ~/.local/bin 선순위 — entrypoint.sh 가 만드는 claude shim(X-Session affinity 보장)이` \
+  `# 'docker exec claude claude' 처럼 셸 미경유 진입에서도 잡히게 한다. docker exec 는` \
+  `# 컨테이너 생성 시 env 를 상속하므로 여기서 PATH 를 지정해야 효과가 있다.` \
+  -e PATH="/home/ubuntu/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   -e ANTHROPIC_BASE_URL="http://${GATEWAY_CONTAINER_NAME}:8080" \
   -e ANTHROPIC_AUTH_TOKEN=lms \
   -e ANTHROPIC_MODEL="$LMS_MODEL" \

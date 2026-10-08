@@ -11,6 +11,11 @@
 #     30k 토큰 기준 6.2s vs 0.49s (~13배). CC 클라이언트는 entrypoint.sh 가
 #     셸별 고유 ANTHROPIC_CUSTOM_HEADERS="X-Session: ..." 를 주입.
 
+# ⚠️ 단일 'server lms:1234 resolve' 로 DNS 복제본을 쓰면 nginx 가 해석된 IP 들을
+#    hash 대상으로 구분하지 못하고 라운드로빈함 → affinity 무효(실측 확인 2026-07-18).
+#    consistent hash 는 개별 server 엔트리(lms-1..N)가 있어야 세션 고정이 성립함.
+#    아래 upstream 의 server 목록은 start.sh 가 LMS_BACKEND_COUNT 에 맞춰 생성·주입함
+#    (envsubst 가 주석 안의 변수 리터럴도 치환하므로 여기에 그 변수명을 그대로 쓰지 말 것).
 resolver 127.0.0.11 valid=5s ipv6=off;
 
 # 해시 키: X-Session 헤더 있으면 그 값(세션 고정), 없으면 요청마다 랜덤(분산 유지)
@@ -20,9 +25,14 @@ map $http_x_session $lms_session_key {
 }
 
 upstream lms_backends {
-    zone lms_zone 64k;                  # resolve 사용 시 필수(공유 메모리 존)
+    # zone + 각 server 의 resolve 는 한 쌍 — resolve 단독은 'requires upstream to be in
+    #   shared memory' 로 기동 실패. 둘 다 있어야 이름을 런타임에 재해석한다.
+    #   없으면 ① 재부팅 시 gateway 가 lms-N 보다 먼저 뜨면 'host not found in upstream'
+    #   으로 nginx 하드 종료 → --restart 재시작 루프, ② 백엔드 재생성으로 IP 가 바뀌면
+    #   부팅 시점 IP 를 영구 보존해 해당 백엔드로 해시된 세션이 계속 502 (실측 2026-07-18).
+    zone lms_backends 64k;
     hash $lms_session_key consistent;   # 같은 세션 키 → 항상 같은 백엔드
-    server lms:${LMS_PORT} resolve;     # Docker DNS 복제본(--scale/N개) 자동 반영
+${LMS_UPSTREAM_SERVERS}
 }
 
 server {
