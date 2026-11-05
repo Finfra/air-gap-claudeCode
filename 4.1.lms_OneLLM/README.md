@@ -34,7 +34,7 @@ claude CLI 가 LMS 의 OpenAI 호환 `/v1` 엔드포인트에 **변환 게이트
 | `Dockerfile.claude`       | Claude Code 클라이언트 이미지 (LMS 직결)                                                                   |
 | `entrypoint.sh`           | claude PID1: `settings.json` 생성 + LMS 대기                                                               |
 | `docker-compose.yml`      | `lms` + `claude` 2서비스, 내부 네트워크, healthcheck                                                       |
-| `docker-compose.gpu.yml`  | GPU override (`runtime: nvidia`)                                                                           |
+| `docker-compose.gpu.yml`  | GPU override (`deploy.resources.reservations.devices` · `driver: nvidia`)                                                                           |
 | `docker-compose.code.yml` | 호스트 코드 폴더 마운트 override                                                                           |
 | `.env.org`                | 파라미터 템플릿 (`cp .env.org .env` 후 사용)                                                               |
 | `vscode-connect.sh`       | **[patch]** Linux/macOS 호스트의 Claude Code(CLI·VSCode 확장)를 LMS 에 직결/해제 ([PATCH.md](PATCH.md))    |
