@@ -73,7 +73,7 @@ docker compose logs -f vllm      # 복제본 로그 (순차 로드 진행 확인
 | `TOOL_CALL_PARSER`         | `hermes`                           | Qwen3 Instruct → `hermes`, Qwen3.5·3.8·Coder → `qwen3_coder`, 빈값=tool 끔   |
 | `REASONING_PARSER`         | (빈값)                             | thinking 모델이면 `qwen3`                                                    |
 | `VLLM_REPLICAS`            | `2`                                | 백엔드 수 (`./start.sh N` 이 우선)                                           |
-| `GPU_MEMORY_UTILIZATION`   | `0.45`                             | 복제본 1개의 GPU 메모리 비율 — 복제본 수 × 비율 ≤ 0.9 (start.sh 가 점검)     |
+| `GPU_MEMORY_UTILIZATION`   | `0.45`                             | 복제본 1개의 GPU 메모리 비율 — 복제본 수 > GPU 수일 때 복제본 수 × 비율 ÷ GPU 수 > 0.92 이면 start.sh 가 기동 거부     |
 | `VLLM_STARTUP_LOCK`        | `1`                                | 복제본 순차 로드 (0 이면 동시 — GPU 분할 시 비권장)                          |
 | `KV_CACHE_DTYPE`           | `turboquant_4bit_nc`               | `auto`·`turboquant_k8v4`·`turboquant_4bit_nc`·`turboquant_k3v4_nc`·`turboquant_3bit_nc` |
 | `MAX_MODEL_LEN`            | `32768`                            | 컨텍스트 상한 — Claude Code 는 시스템 프롬프트만 3k~19k 토큰                 |
@@ -167,7 +167,7 @@ BENCH_ENV=qwen38-27b.env.org BENCH_STARTUP_ONLY=1 BENCH_MAX_MODEL_LEN=32768 benc
 
 ```bash
 ./test.sh                 # 전체
-SKIP_CLAUDE=1 ./test.sh   # Claude Code 종단(8) 생략
+SKIP_CLAUDE=1 ./test.sh   # Claude Code 종단(8·9) 생략
 ```
 
 | #   | 항목                       | 판정                                                          |
