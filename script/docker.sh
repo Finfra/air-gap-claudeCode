@@ -3,7 +3,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 COMPOSE_FILE="${SCRIPT_DIR}/../docker-compose.yml"
-COMPOSE="docker compose -f ${COMPOSE_FILE}"
+COMPOSE=(docker compose -f "${COMPOSE_FILE}")
 
 usage() {
     echo "Usage: $0 {up|down|restart|status|logs|pull} [service]"
@@ -22,30 +22,30 @@ usage() {
 
 up() {
     echo "[up] ${1:-all}"
-    ${COMPOSE} up -d $1
+    "${COMPOSE[@]}" up -d $1
 }
 
 down() {
     echo "[down] all"
-    ${COMPOSE} down
+    "${COMPOSE[@]}" down
 }
 
 restart() {
     echo "[restart] ${1:-all}"
-    ${COMPOSE} restart $1
+    "${COMPOSE[@]}" restart $1
 }
 
 status() {
-    ${COMPOSE} ps
+    "${COMPOSE[@]}" ps
 }
 
 logs() {
-    ${COMPOSE} logs -f $1
+    "${COMPOSE[@]}" logs -f $1
 }
 
 pull() {
     echo "[pull] ${1:-all}"
-    ${COMPOSE} pull $1
+    "${COMPOSE[@]}" pull $1
 }
 
 exec_sh() {
@@ -53,7 +53,7 @@ exec_sh() {
         echo "Usage: $0 exec <service>"
         exit 1
     fi
-    ${COMPOSE} exec "$1" bash
+    "${COMPOSE[@]}" exec "$1" bash
 }
 
 case "${1}" in
