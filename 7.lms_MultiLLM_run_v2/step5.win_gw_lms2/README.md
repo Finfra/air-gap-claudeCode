@@ -37,7 +37,7 @@ step4 에서 서버 내부 스택이 확정된 상태에서 **클라이언트를
 
 **대체 방식**: 검토·복사 가능한 **설정 파일 원본** + 사람이 그대로 따라 하는 **매뉴얼**. Windows 에서 실행되는 자동화 코드는 두지 않는다. 되돌리기는 백업 파일을 되돌려 놓는 것으로 끝난다.
 
-> 폐기한 스크립트는 [cf_old/vscode-connect.ps1](../cf_old/vscode-connect.ps1) 에 보존(참조 전용, 실행 금지).
+> 폐기한 스크립트는 [6.lms_MultiLLM_run/cf_old/vscode-connect.ps1](../../6.lms_MultiLLM_run/cf_old/vscode-connect.ps1) 에 보존(참조 전용, 실행 금지).
 > 아래 매뉴얼은 그 스크립트가 다루던 범위(키 5종 병합·`.bak` 백업·BOM 없는 저장·되돌리기·상태 확인)를
 > 모두 사람이 수행할 수 있게 옮긴 것이다.
 

@@ -70,7 +70,7 @@ cd 7.lms_MultiLLM_run_v2
   오버헤드와 함께 굽는 문서·스크립트 몫이 필요해 **4.6GB** 를 기본으로 잡았다.
 * 다른 매체를 쓰면: `MEDIA_BYTES=25000000000 ./export.sh`(BD-R SL 25GB → 1장),
   `MEDIA_BYTES=0 ./export.sh`(분할 없음, 외장 디스크).
-* 이미지 태그는 [`../step4.cc_gw_lms2/.env.org`](../step4.cc_gw_lms2/.env.org) 에서 읽는다.
+* 이미지 태그는 `../step4.cc_gw_lms2/.env` (없으면 [`.env.org`](../step4.cc_gw_lms2/.env.org)) 에서 읽는다.
   즉 **반입한 tar 의 태그 = step4 `run.sh` 가 찾는 태그** 로 자동 일치한다.
 
 ## 1-2. 디스크 배치
