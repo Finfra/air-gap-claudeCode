@@ -56,10 +56,10 @@ curl -s http://127.0.0.1:1234/v1/models | head
 ./run.sh
 
 # 2) 컨테이너 → 호스트 도달 확인
-docker exec claude curl -fsS http://host.docker.internal:1234/v1/models
+docker exec cc-step1 curl -fsS http://host.docker.internal:1234/v1/models
 
 # 3) Claude Code 1턴 대화
-docker exec -it claude bash
+docker exec -it cc-step1 bash
 cc          # alias = claude --dangerously-skip-permissions
 ```
 
@@ -75,15 +75,15 @@ cc          # alias = claude --dangerously-skip-permissions
 
 아래 3개를 **모두** 만족해야 step2 로 진행:
 
-1. `docker exec claude curl -fsS http://$LMS_HOST:$LMS_PORT/v1/models` → HTTP 200 + 모델 목록
+1. `docker exec cc-step1 curl -fsS http://$LMS_HOST:$LMS_PORT/v1/models` → HTTP 200 + 모델 목록
 2. 컨테이너 안에서 `cc` 실행 → 프롬프트 1턴 응답 수신 (에러·타임아웃 없음)
-3. `docker logs claude` 에 외부망(api.anthropic.com 등) 접속 시도 로그 없음
+3. `docker logs cc-step1` 에 외부망(api.anthropic.com 등) 접속 시도 로그 없음
 
 # 실패 시 진단 순서
 
 | 증상                    | 확인                                                                                        |
 | :---------------------- | :------------------------------------------------------------------------------------------ |
-| curl 자체가 안 나감     | `docker exec claude getent hosts host.docker.internal` — 이름 해석 실패면 `--add-host` 누락 |
+| curl 자체가 안 나감     | `docker exec cc-step1 getent hosts host.docker.internal` — 이름 해석 실패면 `--add-host` 누락 |
 | 연결 거부(refused)      | 호스트 LMS 바인딩이 loopback 전용 — `--bind 0.0.0.0` 재기동                                 |
 | 200 인데 `cc` 가 500    | 모델 컨텍스트 부족 — 호스트 LMS 를 `--context-length 32768 --parallel 1` 로 재로드          |
 | `cc` 가 model not found | `.env` 의 `LMS_MODEL` 이 `/v1/models` 의 실제 키와 불일치                                   |
