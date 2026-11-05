@@ -22,6 +22,5 @@ date: 2026-05-20
 
 # 현황
 
-* Phase 0: 코어 5종 전부 `status: planned` → 훅 파일 없음. `resolveHook`은 `''` 반환
-* Phase 1: `katex_autorender.js`·`chart_dispatch.js` 추가 예정
-* Phase 2: `map_dispatch.js`·`d3_dispatch.js` 추가 예정
+* Phase 0~2 완료: 코어 5종 전부 `status: applied` (`data/component-libraries.yml`)
+* 훅 파일: `katex_autorender.js`·`chart_dispatch.js`·`map_dispatch.js`·`d3_dispatch.js`·`react_dispatch.js`·`htmlart_dispatch.js`·`model3d_dispatch.js`·`p5_dispatch.js`
