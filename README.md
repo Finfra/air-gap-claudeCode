@@ -21,6 +21,21 @@ date: 2026-05-07
 > **폐쇄망에 반입할 폴더는 `6.lms_MultiLLM_run` 하나입니다.** 1~5번은 온라인 머신에서
 > 이미지를 만들고 검증하는 용도입니다. 반입 절차는 [`6.lms_MultiLLM_run/README.md`](6.lms_MultiLLM_run/README.md) 참조.
 
+## 폴더 색인
+
+* [1.ollama_OneContainer](1.ollama_OneContainer/README.md) — Ollama + Claude Code 를 컨테이너 1개에 함께 올리는 가장 단순한 예제
+* [2.ollama_TwoContainer](2.ollama_TwoContainer/README.md) — Ollama 와 Claude Code 를 컨테이너 2개로 분리한 예제
+* [3.ollama_External](3.ollama_External/README.md) — 이미 설치된 외부 Ollama 에 Claude Code 컨테이너만 붙이는 예제
+* [4.1.lms_OneLLM](4.1.lms_OneLLM/README.md) — LM Studio(headless `lms`) 단일 백엔드 + Claude Code 직결 예제
+* [5.lms_MultiLLM](5.lms_MultiLLM/README.md) — nginx 게이트웨이 뒤 LMS 백엔드 N개로 다세션 분산하는 예제
+* [6.lms_MultiLLM_run](6.lms_MultiLLM_run/README.md) — compose 없이 `docker run` 으로 기동하는 폐쇄망 반입 폴더 (5단계 검증)
+* [7.lms_MultiLLM_run_v2](7.lms_MultiLLM_run_v2/README.md) — 6 의 CUDA 런타임 불일치 해결 후 재시도본 (step4·step5)
+* [8.vllm_MultiLLM](8.vllm_MultiLLM/README.md) — 5 의 구조에서 백엔드를 vLLM(TurboQuant KV cache)으로 교체한 예제
+* [m2slidePatch](m2slidePatch/README.md) — m2slide(마크다운 → Reveal.js)를 오프라인에서 빌드·실행하는 자체완결 패치
+* [offline-scar](offline-scar/README.md) — 단독망 로컬 모델용 네이티브 Claude Code 린 SCAR 번들
+* [script](script/README.md) — 저장소 공용 보조 스크립트 (compose 관리 래퍼)
+* [tdd](tdd/README.md) — 재생목록(`playlist.md`) + 러너(`run.sh`) + 케이스(`cases/`) 테스트 폴더
+
 ## 6.lms_MultiLLM_run 단계별 검증 (Issue18)
 
 2026-07 반입이 실패(Windows 스크립트 오동작 / 시작 `run` 명령 미동작 / 게이트웨이 경유 실패)하여, **변수를 하나씩만 추가하는 5단계 검증**으로 재구성했습니다. 각 단계는 직전 단계의 게이트 통과가 전제이며, 이전 반입본은 `6.lms_MultiLLM_run/cf_old/` 에 대조군으로 보존합니다.
