@@ -1,10 +1,10 @@
 # 5.lms_MultiLLM
 
 게이트웨이(nginx) 단일 주소 뒤에 LM Studio(**headless `lms` CLI**) 백엔드를 **N개** 두어, Claude Code 다세션이 하나의 주소로 여러 LMS 백엔드에 분산 접근하는 예제.
-`4.lms_OneLLM`(직결 단일)의 최종 확장형이며, 거기서 실증된 **직결(변환 게이트웨이 불요, B1)** 을 계승하고 **분산 계층**만 추가한다.
+`4.1.lms_OneLLM`(직결 단일)의 최종 확장형이며, 거기서 실증된 **직결(변환 게이트웨이 불요, B1)** 을 계승하고 **분산 계층**만 추가한다.
 
 > 설계 SSOT: [`_doc_arch/lms-multi-gateway-design.md`](../_doc_arch/lms-multi-gateway-design.md)
-> 전체 예제 비교: 루트 [`README.md`](../README.md) · 청사진: [`4.lms_OneLLM`](../4.lms_OneLLM/README.md)
+> 전체 예제 비교: 루트 [`README.md`](../README.md) · 청사진: [`4.1.lms_OneLLM`](../4.1.lms_OneLLM/README.md)
 
 ---
 
@@ -32,8 +32,8 @@
 | 파일                      | 역할                                                                                                                 |
 | :------------------------ | :------------------------------------------------------------------------------------------------------------------- |
 | `Dockerfile.gateway`      | nginx L7 분산 게이트웨이 이미지 (`nginx:1.27` + curl)                                                                |
-| `nginx.conf.template`     | 게이트웨이 설정(envsubst `${LMS_PORT}`): resolver + 변수 proxy_pass, SSE(buffering off), least_conn 정적 대안 주석   |
-| `Dockerfile.lms`          | headless `lms` CLI 백엔드 이미지 (4.lms_OneLLM 그대로)                                                               |
+| `nginx.conf.template`     | 게이트웨이 설정(envsubst `${LMS_PORT}`): resolver + `upstream … resolve` + X-Session consistent hash, SSE(buffering off), 하단 주석에 이전 방식(변수 proxy_pass)   |
+| `Dockerfile.lms`          | headless `lms` CLI 백엔드 이미지 (4.1.lms_OneLLM 그대로)                                                               |
 | `entrypoint.lms.sh`       | LMS PID1: `lms daemon up`→`lms server start --bind 0.0.0.0`→`/v1/models` 폴링→`lms get`/`load`→`exec lms log stream` |
 | `Dockerfile.claude`       | Claude Code 클라이언트 이미지 (게이트웨이 직결)                                                                      |
 | `entrypoint.sh`           | claude PID1: `settings.json`(게이트웨이 URL) 생성 + 게이트웨이 대기                                                  |
@@ -127,8 +127,8 @@ docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --scale lms
 
 ## 분산 방식 (nginx)
 
-* **동적 DNS 라운드로빈(기본)**: `nginx.conf.template` 이 Docker 임베디드 DNS(`127.0.0.11`)와 변수 `proxy_pass http://$lms_pool:1234` 를 사용 → `lms` 서비스명이 `--scale` 복제본 IP 들로 해석되어 **매 요청 분산**. 백엔드 추가/제거가 `--scale` 만으로 반영됨(게이트웨이 설정 변경 불요).
-* **least_conn 정적 upstream(대안)**: 연결 단위 분산이나 백엔드별 GPU 핀(1 GPU=1 백엔드)이 필요하면, 명시적 `lms-1..N` 서비스 + `upstream { least_conn; ... }` 로 전환. 방법은 `nginx.conf.template` 하단 주석 참조. (백엔드 수가 compose 에 고정됨)
+* **DNS resolve + 세션 고정(기본)**: `nginx.conf.template` 이 Docker 임베디드 DNS(`127.0.0.11`)와 `upstream lms_backends { hash $lms_session_key consistent; server lms:${LMS_PORT} resolve; }` 를 사용 → `lms` 서비스명이 `--scale` 복제본 IP 들로 해석되고, `X-Session` 헤더 기준으로 **세션↔백엔드 고정**(헤더 없는 요청은 `$request_id` 로 랜덤 분산). 백엔드 추가/제거가 `--scale` 만으로 반영됨(게이트웨이 설정 변경 불요).
+* **least_conn 정적 upstream(대안)**: 연결 단위 분산이나 백엔드별 GPU 핀(1 GPU=1 백엔드)이 필요하면, 명시적 `lms-1..N` 서비스 + `upstream { least_conn; ... }` 로 전환. (템플릿 하단 주석은 이전 방식인 변수 proxy_pass 예시이며 least_conn 예시는 없음.) (백엔드 수가 compose 에 고정됨)
 * **SSE 스트리밍**: `proxy_buffering off` + 타임아웃 600s 로 claude 토큰 스트림 보존.
 * **기동 게이팅**: 게이트웨이 healthcheck=`/v1/models` 는 백엔드가 응답해야 200 → 모델 로드(최대 60s) 중 초기 502 동안 claude 기동을 막음.
 
@@ -219,7 +219,7 @@ docker compose up -d --no-build --scale lms=2
 # 4) 확인
 docker compose ps               # lms(×N) healthy → gateway healthy → claude
 docker compose logs -f gateway  # 백엔드 분산/프록시 로그
-docker exec -it claude cc
+docker exec -it claude claude --dangerously-skip-permissions   # cc 는 bash 별칭이라 docker exec 로 직접 호출 불가
 ```
 
 > `--no-build` 가 빠지면 compose 가 `build:` 섹션 때문에 폐쇄망에서 재빌드를 시도하다 실패한다. `--scale lms=N` 의 N 은 추출 머신과 같은 수(또는 GPU 자원에 맞춰)로 지정한다.
@@ -346,7 +346,7 @@ docker exec lms lms ls        # 3개 모두 Local 확인
 docker run -it --name claude --network lmsnet \
   -e GW_HOST=lms -e GW_PORT=1234 \
   -e ANTHROPIC_MODEL=qwen/qwen3-coder-30b \
-  claude:latest cc
+  claude:latest claude --dangerously-skip-permissions
 ```
 
 모델 교체는 LMS 에서 직접:

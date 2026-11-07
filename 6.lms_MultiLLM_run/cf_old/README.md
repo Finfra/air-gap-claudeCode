@@ -14,7 +14,7 @@
 | 대상 환경         | 온라인 · docker compose 설치됨     | air-gap · compose 없음 · 추가 설치 불가                            |
 | 이미지            | 로컬 `build` 로 준비               | 사전 `docker load -i *.tar` 로 반입                                |
 | 백엔드 스케일     | `--scale lms=N`                    | `LMS_BACKEND_COUNT=N` (lms-1 … lms-N)                              |
-| nginx 백엔드 분산 | Docker DNS RR (compose 서비스명)   | Docker DNS RR (`--network-alias lms`)                              |
+| nginx 백엔드 분산 | Docker DNS RR (compose 서비스명)   | upstream consistent hash (lms-1..N 개별 엔트리)                    |
 | entrypoint 배포   | Dockerfile `COPY` 로 이미지에 굽힘 | 폴더의 스크립트를 `:ro` bind mount + `--entrypoint` 로 런타임 주입 |
 
 ## 왜 entrypoint 스크립트를 폴더에서 주입하는가
@@ -53,7 +53,7 @@
 └── README.md
 ```
 
-> `_img/` 하위 tar·SHA256SUMS 는 git 미추적 (매체 복사로만 전달). **air-gap 반입 시 이 폴더 전체를 복사**하면 외부 의존 없음 — 단, `lms:latest` 이미지(24.7GB)는 **기반입 완료 전제** (아래 사전 조건 2 참조).
+> `_img/` 하위 tar 는 git 미추적(SHA256SUMS 는 추적) (매체 복사로만 전달). **air-gap 반입 시 이 폴더 전체를 복사**하면 외부 의존 없음 — 단, `lms:latest` 이미지(24.7GB)는 **기반입 완료 전제** (아래 사전 조건 2 참조).
 
 ---
 
@@ -165,7 +165,7 @@ docker logs -f lms-1
    (GW_HOST/GW_PORT)                            (동일 폴더의 스크립트 override)
 ```
 
-- `lms-1..N` 은 모두 `--network-alias lms` 로 붙어 있어 nginx 안 `resolver 127.0.0.11` + `proxy_pass http://lms:${LMS_PORT}` 가 라운드로빈으로 분산 (5.판과 동일 원리).
+- `start.sh` 가 `lms-1..N` 개별 server 엔트리를 `LMS_UPSTREAM_SERVERS` 로 주입하고, nginx 는 `upstream lms_backends` + `hash $lms_session_key consistent` 로 분산 — X-Session 헤더가 있으면 세션 고정, 없으면 `$request_id` 로 랜덤 분산 (`nginx.conf.template` 하단 주석이 이전 방식인 DNS 라운드로빈).
 - claude 는 nginx 게이트웨이 단일 주소(`http://gateway:8080`)로 직결. 변환 프록시 없음(순수 OpenAI /v1 패스스루).
 
 ---

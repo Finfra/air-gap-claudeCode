@@ -17,7 +17,7 @@ step3 에서 게이트웨이 1:1 경로가 확정된 상태에서 **백엔드를
 검증 대상:
 
 * `X-Session` 헤더 consistent hash → **세션↔백엔드 고정(affinity)**
-* affinity shim (PATH 선순위 `~/.local/bin/claude`) — `docker exec claude claude` 처럼 셸 미경유 진입에서도 헤더 보장
+* affinity shim (PATH 선순위 `~/.local/bin/claude`) — `docker exec cc-step4 claude` 처럼 셸 미경유 진입에서도 헤더 보장
 * GPU 전용 할당 (`--gpus "device=K"`) — `--gpus all` 을 N개에 주면 전원이 GPU0 에 적재됨
 * VRAM 초과 구독 가드 (`LMS_ALLOW_GPU_OVERSUBSCRIBE`)
 

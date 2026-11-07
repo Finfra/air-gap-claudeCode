@@ -100,6 +100,5 @@ tar 로 떠서 매체로 옮겨 적재하는 절차가 별도로 필요하다 �
 ├── step5.win_gw_lms2/         # 5. + Windows 클라이언트 (파일 + 매뉴얼)
 ├── bringin/                   # 반입 아티팩트: export.sh(이미지→tar) / load.sh(단독망 적재)
 ├── fallback.gw_ollama/        # 대체. gateway → ollamawebui:11434 (lms 실패 시)
-├── __img/                     # 문서용 스크린샷
 └── cf_old/                    # 실패한 이전 반입본 (참조 전용, 실행 금지)
 ```

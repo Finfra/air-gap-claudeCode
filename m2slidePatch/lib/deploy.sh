@@ -35,7 +35,7 @@ fi
 if [ -n "$PROJECT_ARG" ]; then
   CURRENT_PROJECT="$PROJECT_ARG"
 else
-  CURRENT_PROJECT=$(grep "^current_project:" "$CONFIG_FILE" | sed 's/current_project:[[:space:]]*//')
+  CURRENT_PROJECT=$(grep "^current_project:" "$CONFIG_FILE" | sed 's/current_project:[[:space:]]*//' || true)
 fi
 
 if [ -z "$CURRENT_PROJECT" ]; then
@@ -67,7 +67,7 @@ fi
 AGENDA_FILE="$PROJECT_DIR/markdown/AGENDA.md"
 PROJECT_TITLE="$CURRENT_PROJECT"
 if [ -f "$AGENDA_FILE" ]; then
-  AGENDA_TITLE=$(grep "^# " "$AGENDA_FILE" | head -1 | sed 's/^# //')
+  AGENDA_TITLE=$(grep "^# " "$AGENDA_FILE" | head -1 | sed 's/^# //' || true)
   if [ -n "$AGENDA_TITLE" ]; then
     PROJECT_TITLE="$AGENDA_TITLE"
   fi
